@@ -1,418 +1,370 @@
-# Wide Forecast Functions: Video Developer Guide
+# SIT742 Assignment 2 Group Video Script
+
+## 0:00-1:00 - Introduction and forecasting objective
+
+Hello. We are **Group <ConfirmedGroupID>**, and this is our SIT742 Assignment 2 forecasting project.
+
+Our task is to forecast monthly Chinese outbound tourism demand for 20 destinations. We use the public TULIP Lab `ISF-TDF2023` dataset. The public history is available through July 2023, and our final forecast covers the 12 months from August 2023 to July 2024.
+
+Our workflow has three main goals: produce accurate destination-level forecasts, prevent future-data leakage, and make the complete result reproducible from the submitted notebook. We compare simple baselines with recovery-aware statistical and foundation-model approaches, evaluate them using MASE and MAPE, select one final method, and export the final all-destination forecast directly from the notebook.
+
+[SCREEN: Show the notebook title, group details, assignment overview, and dataset acknowledgement.]
+
+## 1:00-5:00 - Data, cutoffs, and Q1-Q3 functions
+
+Use these as simple talking points. Do not read every point word for word. Keep one main idea in each sentence and use one short example per question.
+
+### Data foundation
+
+- The data has 415 monthly rows and 21 columns.
+- `Date` is the first column. The other 20 columns are destinations.
+- This is a **wide table**. Each row is one month, and each destination has its own column.
+- `Date` starts as text, such as `2023M07`.
+- The code converts `Date` to a monthly pandas period, called `Period[M]`.
+- This makes month sorting and subtraction safe across different years.
+- Destination columns contain numeric monthly demand counts. They are not percentages.
+- Some columns use floating-point values because they contain missing values.
+- Demand scale is different across markets. Some are in thousands; others reach hundreds of thousands or millions.
+- Missing values stay as `NaN`. They are not changed to zero because missing data does not mean zero demand.
+- Every destination column is a separate forecast target.
+- The dates are used to create the training, validation, and final forecast periods.
+
+### Critical columns to mention
+
+| Column or column group | Typical type | Why it is important |
+| --- | --- | --- |
+| `Date` | Text, then `Period[M]` | Controls sorting, cutoffs, validation months, forecast months, and alignment. It must be first in the final CSV. |
+| `Australia` | Numeric | Required market for Q6 and used for market-level analysis. |
+| `Japan` | Numeric | Required market for Q6 and used for market-level analysis. |
+| `New Zealand` | Numeric | Extra market chosen because its pattern is similar to Australia. |
+| `Taiwan China` | Numeric | Extra market chosen because its recovery pattern differs from Japan. |
+| Other 16 destinations | Numeric | All are required in the validation tables and final forecast. |
+| `_month_period` | Monthly period | Helper used for date filtering. It must not appear in the final CSV. |
+| `destination` | Text | Market name in the long-format table. |
+| `demand` | Numeric | Demand value in the long-format table. |
+
+- **Emphasize:** the final CSV contains only `Date` and the exact 20 destination columns.
+- Do not export helper columns, model labels, diagnostics, actual values, intervals, or an index column.
+- The long table has three main columns: `Date`, `destination`, and `demand`.
+- No external features are used. The forecasts use only past demand values.
+- Validation uses demand observations only through `2023M02` and forecasts `2023M03` to `2023M07`.
+- Final forecasting uses public history only through `2023M07` and forecasts `2023M08` to `2024M07`.
+- The cutoff is applied before forecasting, so later actual values cannot leak into model inputs.
 
-## Introduction
+### Q1 - Naive-lag forecast generation
+
+- **Emphasize the implementation:** the function first converts month labels to monthly periods and removes every row after the cutoff.
+- It creates a month-to-value lookup for all required destinations.
+- It generates future months in chronological order so an earlier forecast can be reused by a later forecast.
+- For lag 1, the first future month uses the last actual value. Later months reuse generated values recursively.
+- For lag 12, each target month uses the same calendar month from the previous year.
+- If a source month is unavailable, the function returns `NaN` instead of creating an unsupported value.
+- The final step restores the requested month order and returns only `Date` plus the destination columns.
+- **Example to explain:** with a February cutoff and value 100, lag-1 forecasts for March, April, and May are all 100 because April uses the generated March value and May uses generated April.
+- **Emphasize the result:** both lag-1 and lag-12 toy checks pass.
+- The real validation run produces five forecast months for all 20 destinations for both baselines.
+- Lag-1 gives a stable flat forecast across the recursive horizon, while lag-12 keeps the previous year's seasonal pattern.
+
+### Q2 - Forecast and actual validation
 
-Hello, and welcome to this developer guide for the wide-format forecasting functions.
+- **Emphasize the implementation:** the function first defines the required month and destination scope.
+- It checks forecast months, row counts, duplicate dates, missing destinations, and extra columns.
+- It scans required values and counts missing, nonnumeric, and nonfinite cells separately.
+- When actual data is supplied, it keeps only the required evaluation months before checking alignment.
+- Structural checks are summarized by `can_align`.
+- Structure and value-quality checks are combined into the stricter `is_valid` result.
+- The function always returns the same 20 audit fields, which makes every audit easy to compare.
+- In forecast-only mode, actual-related fields and `can_align` remain `None` because no actual table is available.
+- **Emphasize the result:** both baseline validation audits report `can_align=True` and pass the required checks.
+- The final submission audit reports `is_valid=True` and `can_align=None`.
+- It confirms 12 rows, 20 destinations, no duplicate dates, no missing values, and no nonnumeric or infinite forecasts.
+
+### Q3 - Forecast accuracy evaluation
+
+- **Emphasize the implementation:** the function converts dates to monthly periods and keeps only the evaluation window.
+- It rejects duplicate evaluation dates and joins forecast and actual rows one-to-one by month.
+- It converts invalid numeric values to `NaN` and uses only valid forecast-actual pairs.
+- MAE is calculated first from the absolute errors.
+- For MASE, the training history is sorted and paired by the exact calendar lag for each destination.
+- The official denominator uses lag 1, including when the forecast being evaluated is lag 12.
+- MAPE uses valid rows with nonzero actual values, so the code never divides by zero.
+- The function records pair counts and denominator warnings before creating unweighted aggregate results.
+- **Emphasize the result:** lag-1 achieved mean MASE `2.67`, median MASE `1.70`, and mean MAPE `48.1%`.
+- Lag-12 was weaker, with mean MASE `4.41`, median MASE `3.83`, and mean MAPE `77.9%`.
+- These tables connect the Q1 forecasts, Q2 audits, and Q3 measures in one visible workflow.
+
+[SCREEN: First show `raw_tourism_data.head()`, its shape, and its dtypes or schema. Then show `tourism_series_long.head()`, the Q1 toy checks, a successful Q2 audit, and both baseline evidence tables. Pause on important fields rather than reading every field.]
+
+## 5:00-7:00 - Exploratory analysis and modelling implications
+
+Use these as prompts and connect each observation to a modelling decision. Keep the section close to two minutes, prioritising the points marked **emphasize** and allowing time to pause on the most useful figures.
+
+### EDA purpose and coverage
 
-In this video, I will explain how the forecasting workflow is structured, what each function does, and how the functions work together. I will also highlight the main inputs, outputs, safeguards, and edge cases that developers should understand before using them.
+- **Emphasize:** EDA was used to understand whether the 20 destinations could reasonably be forecast using one common set of model assumptions.
+- The public table contains monthly demand histories with different starting dates and numbers of valid observations.
+- Missing periods before a destination began reporting are retained as missing rather than interpreted as zero demand.
+- Summary statistics and coefficients of variation show large differences in scale and volatility across destinations. This is why raw MAE alone is not suitable for comparing markets.
 
-The workflow contains eight core functions:
+### Univariate findings
 
-1. `generate_naive_forecast_wide`
-2. `validate_forecast_actual_wide`
-3. `evaluate_forecast_wide`
-4. `generate_seasonal_recovery_forecast_wide`
-5. `generate_blended_recovery_forecast_wide`
-6. `generate_sarima_forecast_wide`
-7. `generate_prophet_forecast_wide`
-8. `generate_timesfm_forecast_wide`
+- **Emphasize:** the time-series plots show trend, annual seasonality, and a major COVID-19 structural break followed by uneven recovery.
+- Several distributions are strongly skewed, especially where long low-demand periods are followed by rapid reopening.
+- The monthly seasonal view shows that demand changes by calendar month, supporting the inclusion of annual seasonal models.
+- The ADF tests indicate that none of the 20 level series is stationary at the five-percent significance level. This suggests that models must account for changing levels or differences rather than assuming a constant mean.
+- Month-on-month change flags highlight unusually sharp movements. These observations motivate robust caps and safeguards instead of allowing a single recovery jump to dominate a forecast.
 
-We will begin with the shared data format, move through forecast generation, validation, and evaluation, and then look at the more advanced forecasting models.
+### Multivariate findings
 
-## Shared data format
+- Most destination correlations are positive because markets experienced common tourism shocks; correlation is used as supporting interpretation, not as proof of causation.
+- New Zealand has the strongest reported correlation with Australia, approximately 0.95, which supports using it as a related comparison market in Q6.
+- Taiwan China provides a contrasting case for Japan, with a weaker reported correlation of approximately 0.56 and a different recovery path.
+- The final models still forecast each destination separately, so no destination's future value is copied from another market.
 
-All eight functions work with monthly pandas DataFrames in wide format.
+### EDA-to-model decisions
 
-The date column is normally called `Date` and contains labels such as `2023M03`. Every destination has its own numeric column, and every row represents one month.
+- **Emphasize:** lag-1 is retained as a stable latest-level benchmark.
+- **Emphasize:** lag-12 and seasonal models are retained because annual patterns are visible.
+- Recovery-aware models are added because pre-COVID or previous-year levels alone do not represent the reopening period well.
+- Non-negative floors, clipped recovery ratios, historical growth caps, and deterministic fallbacks are used to control unstable forecasts.
+- Destination-level metrics and plots remain necessary because an aggregate winner can still perform poorly for an individual market.
 
-For example:
+[SCREEN: Show the all-destination history plot first, then one seasonal figure and one concise statistics or ADF table. Avoid spending time reading every destination row.]
 
-| Date | Australia | Japan |
-| --- | ---: | ---: |
-| `2023M03` | 100 | 200 |
-| `2023M04` | 110 | 220 |
+## 7:00-10:30 - Candidate models
 
-Before comparing dates or performing date arithmetic, the functions convert these labels into monthly `pandas.Period` values. This matters because calendar operations must be performed on dates rather than strings. For example, one month before January 2024 is December 2023, and a monthly period handles that transition correctly.
+Use these points to compare the models in your own words. Focus on the forecast logic and the measured result. Do not spend time reading function parameters.
 
-With that shared format established, let us begin with the simplest forecasting method.
+### Common comparison design
 
-## 1. Naive forecasting
+- **Emphasize:** all seven candidates use the same cutoff-safe training table, validation months, 20 destinations, wide output schema, and evaluation functions.
+- Every candidate is evaluated with MASE using lag-1 scaling and with MAPE using zero-actual handling.
+- Fixed settings are applied consistently across destinations to keep the comparison reproducible and avoid hidden destination-specific tuning.
 
-The first function is `generate_naive_forecast_wide`.
+### Model 1 - Naive lag-1
 
-```python
-generate_naive_forecast_wide(
-    historical_actual_wide,
-    cutoff_label,
-    forecast_months,
-    required_destinations=None,
-    lag=1,
-    date_column="Date",
-)
-```
+- **Implementation:** carries the latest available monthly level forward recursively.
+- **Strength:** simple, deterministic, and stable during an uncertain recovery period.
+- **Limitation:** produces a flat 12-month forecast and cannot represent annual seasonality.
+- **Result:** mean MASE `2.67`, median MASE `1.70`, and mean MAPE `48.1%`.
 
-This function creates a naive lag forecast for one or more destinations. In simple terms, it forecasts a month by reusing a value from a fixed number of months earlier.
+### Model 2 - Seasonal naive lag-12
 
-If the lag is one, it uses the previous month's value. If the lag is twelve, it uses the value from the same month in the previous year. Any positive integer lag is supported.
+- **Implementation:** repeats demand from the same month in the previous year.
+- **Strength:** preserves a transparent annual seasonal pattern.
+- **Limitation:** assumes the previous year's level remains relevant, so it can under-forecast during rapid recovery.
+- **Result:** mean MASE `4.41`, median MASE `3.83`, and mean MAPE `77.9%`. It was the weakest baseline overall.
 
-The historical table provides the observed data. The cutoff identifies the final month whose actual value may be used, which prevents future-data leakage. The forecast-month list identifies the months to generate, and its original order is preserved in the output.
+### Model 3 - Seasonal recovery naive
 
-If `required_destinations` is omitted, every column except the date column is forecast. The function checks that the lag is a positive integer, that the date column exists, and that every requested destination is present. Boolean lag values are rejected.
+- **Implementation:** begins with the lag-12 seasonal value and multiplies it by a recent recovery ratio.
+- The ratio compares the latest six valid months with the same calendar months one year earlier.
+- The recovery effect is strongest near the cutoff and decays toward ordinary seasonal naive over 12 months.
+- **Strength:** combines annual shape with changing recovery levels.
+- **Limitation:** a very small year-ago base can create an extreme ratio, so ratios are clipped and forecasts are growth-capped.
+- **Result:** mean MASE `2.70`, median MASE `1.62`, and mean MAPE `45.4%`.
 
-After converting all month labels to periods, the function removes observations after the cutoff. If a historical month is duplicated, it keeps the last supplied row. It then generates the required periods chronologically using this rule:
+### Model 4 - Blended recovery
 
-```text
-forecast for month m = value from month m minus the lag
-```
+- **Implementation:** combines 60 percent lag-1 with 40 percent seasonal recovery.
+- The lag-1 component anchors the latest level; the recovery component adds seasonal and reopening movement.
+- **Emphasize:** `BLENDED_RECOVERY_WEIGHT = 0.4` is a fixed, validation-supported stability trade-off.
+- **Strength:** more stable than full seasonal recovery while retaining a non-flat forecast shape.
+- **Limitation:** one common weight may not be optimal for every destination.
+- **Result:** it ranked first with mean MASE `2.49`, median MASE `1.53`, and mean MAPE `43.0%`.
+- The weight was not obtained from an exhaustive continuous optimisation search.
 
-If the source month is at or before the cutoff, the observed value is used. If it is after the cutoff but was forecast earlier, that forecast is reused recursively.
+### Model 5 - SARIMA
 
-For example, suppose the cutoff is February 2023, the last observed value is 100, and we need a lag-one forecast for March, April, and May. March uses February's actual value. April uses March's generated value, and May uses April's generated value. The forecast is therefore 100 for all three months.
+- **Why included:** SARIMA is a standard statistical benchmark for monthly data. It tests whether modelling autocorrelation, differencing, and yearly seasonality improves on the simpler recovery rules.
+- **Implementation:** fits `SARIMAX(1,1,1)(1,1,1,12)` independently to each destination.
+- Non-seasonal and seasonal differencing address changing levels and annual structure.
+- **Strength:** established statistical model with explicit short-run and seasonal dynamics.
+- **Limitation:** fixed orders may not fit every destination, and a COVID-scale structural break can weaken historical relationships.
+- **Result:** mean MASE `2.98`, median MASE `2.78`, and mean MAPE `54.9%`.
 
-The output is a wide DataFrame containing the date first, followed by the requested destinations in their original order. It contains no model labels, diagnostics, or index column. If no months are requested, it returns an empty DataFrame with the correct columns. A missing source period produces `NaN`, while a missing destination or invalid lag raises a clear `ValueError`.
+### Model 6 - Prophet
 
-One detail is worth emphasizing: a requested month at or before the cutoff still follows the lag rule. The function does not simply copy the actual value from the same month.
+- **Why included:** Prophet provides a different statistical approach. It tests whether flexible trend changes and multiplicative yearly seasonality can handle the uneven recovery better than fixed seasonal relationships.
+- **Implementation:** models trend changes with multiplicative yearly seasonality. Daily and weekly seasonalities are disabled for monthly data.
+- **Strength:** flexible trend and changepoint representation with interpretable components.
+- **Limitation:** the standard configuration may not adapt well to the near-total COVID collapse and reopening without additional regressors or destination-specific tuning.
+- **Result:** mean MASE `4.23`, median MASE `3.75`, and mean MAPE `83.8%`.
 
-Now that we can generate a basic forecast, the next step is to confirm that the data is structurally sound.
+### Model 7 - TimesFM 2.5 zero-shot
 
-## 2. Forecast and actual validation
+- **Why included:** TimesFM provides a modern pretrained comparison. It tests whether patterns learned from many external time series can improve these forecasts without fitting or tuning a separate local model.
+- **Implementation:** uses each destination's cutoff-safe history as context for a pretrained time-series foundation model.
+- No local fitting or fine-tuning is performed, and all eligible destinations are forecast in a batch.
+- **Strength:** provides a modern model comparison and performed strongly in the longer backtest.
+- **Limitation:** requires an external checkpoint and more computation, and official validation was slightly weaker than the selected blend.
+- **Result:** mean MASE `2.60`, median MASE `2.00`, and mean MAPE `43.8%`. It ranked second on official mean MASE.
 
-The validation function is `validate_forecast_actual_wide`.
+### Shared stability and fallback rules
 
-```python
-validate_forecast_actual_wide(
-    forecast_wide_df,
-    actual_wide_df=None,
-    required_months=None,
-    required_destinations=None,
-    date_column="Date",
-)
-```
+- SARIMA and Prophet require sufficient history and fall back to seasonal recovery after fitting errors or nonfinite predictions.
+- TimesFM falls back to blended recovery if loading or batch inference fails.
+- Successful fitted forecasts are floored at zero and capped relative to the destination's cutoff-safe historical maximum.
+- Diagnostic logs record fallbacks; no destination required fallback in the saved official validation run.
 
-This function audits the structure and value quality of a forecast. It can also check whether forecast and actual tables can be aligned safely.
+[SCREEN: Show one model-comparison diagram or the seven model headings. Pause on the blend formula and the shared fallback safeguards, then move to the measured results rather than opening every function.]
 
-It has two modes. In forecast-only mode, the actual table is left as `None`. This is useful before export or submission. In forecast-versus-actual mode, an actual table is supplied so that both datasets can be checked before evaluation.
+## 10:30-13:30 - Validation results and model selection
 
-If `required_months` is omitted, the forecast table defines the alignment scope. If `required_destinations` is omitted, every forecast column except the date is treated as a destination.
+Use this section to explain what the results mean, where each model is useful, and why the final model was selected. Do not only read the ranking table.
 
-The validator checks the required date column, expected row count, missing or extra months, duplicate dates, missing destinations, extra columns, missing values, nonnumeric values, and infinite values.
+### Validation design
 
-Duplicate dates are counted only after their first occurrence. Cell-quality issues are counted only for required destinations that are present and for months inside the required scope. If an entire destination column is absent, its name is reported separately rather than producing an artificial count of missing cells.
+- The official validation period is `2023M03` to `2023M07`.
+- Every model uses history only through `2023M02`.
+- Every model forecasts the same five months and the same 20 destinations.
+- Lower MASE and MAPE are better.
+- Mean MASE is the main comparison measure. Median MASE shows whether a few difficult markets are affecting the mean.
+- MAPE gives a percentage-based second view of error.
 
-When actual data is provided, the function first subsets it to the alignment months. The original actual source may therefore contain extra months without failing the audit. It then checks month and destination coverage, duplicate dates, value quality, and one-to-one alignment with the forecast.
+### Official validation comparison
 
-Two results are especially important: `can_align` and `is_valid`.
+| Model | Mean MASE | Median MASE | Mean MAPE | Where the model fits |
+| --- | ---: | ---: | ---: | --- |
+| Naive lag-1 | 2.67 | 1.70 | 48.1% | Useful when the latest level is the safest assumption and a flat forecast is acceptable. |
+| Naive lag-12 | 4.41 | 3.83 | 77.9% | Useful when the yearly pattern is stable and the demand level has not changed greatly. |
+| Seasonal recovery | 2.70 | 1.62 | 45.4% | Useful when annual seasonality remains important but the market is recovering to a new level. |
+| Blended recovery | **2.49** | **1.53** | **43.0%** | Useful when both stability and recovery movement are needed. This was the selected model. |
+| SARIMA | 2.98 | 2.78 | 54.9% | Useful when a series has enough history and reasonably stable autocorrelation and seasonal structure. |
+| Prophet | 4.23 | 3.75 | 83.8% | Useful when trend changes and multiplicative seasonality are more important than fixed lag relationships. |
+| TimesFM 2.5 | 2.60 | 2.00 | 43.8% | Useful as a quick zero-shot model when strong forecasts are needed without local fitting or manual order selection. |
 
-`can_align` tells us whether the tables have compatible months, destinations, row counts, and unique dates. It describes structural compatibility but does not guarantee usable values. In forecast-only mode, it is `None`.
+### What the results show for each model
 
-`is_valid` is stricter. It is true only when every applicable structure, coverage, and value-quality check passes. Two tables can therefore be alignable while the overall audit is invalid because a value is missing or infinite.
+- **Lag-1:** this was a strong and stable baseline, but its flat forecast cannot show annual peaks and troughs.
+- **Lag-12:** this was the weakest overall model because the previous year's depressed values did not represent the speed of recovery.
+- **Seasonal recovery:** this improved MAPE compared with lag-1 and restored seasonal shape, but full recovery scaling was less stable for fast-reopening destinations.
+- **Blended recovery:** this produced the lowest mean MASE, lowest median MASE, and lowest mean MAPE in official validation.
+- **SARIMA:** this captured statistical and seasonal structure, but the fixed order did not handle the COVID disruption as well as the recovery-aware blend.
+- **Prophet:** this provided a useful trend-based comparison, but its fixed configuration was weak in aggregate for the collapse-and-reopening pattern.
+- **TimesFM:** this was very close to the selected model and clearly outperformed several traditional candidates.
 
-Value problems are separated into three categories. A missing value is a null such as `None` or `NaN`. A nonnumeric value is present but cannot be converted into a number. A nonfinite value converts to a number but is positive infinity, negative infinity, or otherwise not finite.
+### Why blended recovery was selected
 
-The output is a fixed-schema dictionary with these fields:
+- **Best official result:** it ranked first on mean MASE, median MASE, and mean MAPE.
+- **Balanced logic:** 60 percent lag-1 controls unstable recovery values, while 40 percent seasonal recovery adds movement and annual shape.
+- **Stable output:** it produced finite, non-negative, destination-specific forecasts for all 20 markets.
+- **Simple reproduction:** it is deterministic and does not depend on an optimiser, random seed, or downloaded model during final generation.
+- **Longer-horizon support:** its mean MASE was `2.19` in the 12-month recovery-era backtest, compared with `2.24` for lag-1.
+- **Limitation:** one fixed weight is not best for every destination, and the 0.4 weight was not selected through an exhaustive search.
 
-```text
-is_valid
-can_align
-forecast_row_count
-actual_row_count
-expected_row_count
-missing_months_in_forecast
-missing_months_in_actual
-extra_months_in_forecast
-extra_months_in_actual_source
-missing_destinations_in_forecast
-missing_destinations_in_actual
-extra_columns_in_forecast
-duplicate_forecast_dates
-duplicate_actual_dates
-missing_forecast_value_count
-missing_actual_value_count
-nonnumeric_forecast_value_count
-nonnumeric_actual_value_count
-nonfinite_forecast_value_count
-nonfinite_actual_value_count
-```
+### Why TimesFM was still useful
 
-In forecast-only mode, the actual-related fields are `None`. Forecast tables are intentionally strict, so extra forecast months or columns make them invalid. Missing requirements, duplicates, missing values, nonnumeric values, and infinite values also cause the relevant audit to fail.
+- TimesFM ranked second in official validation with mean MASE `2.60` and mean MAPE `43.8%`.
+- It achieved the best 12-month backtest mean MASE of `2.06`.
+- It is a newer foundation-model approach and provides evidence that pretrained time-series models can be competitive on this tourism dataset.
+- It is simple from a modelling point of view: we pass each destination's history to the pretrained model and request the forecast horizon.
+- It does not require local training, SARIMA order selection, Prophet configuration tuning, or a separate fitted model for every destination.
+- It can forecast all eligible destination histories together in one batch.
+- This makes it useful for quick benchmarking and for future work with more rolling validation windows.
+- However, simple model use does not mean zero operational cost. TimesFM still needs the external checkpoint, compatible packages, more memory, and more computation than blended recovery.
+- We did not select it because blended recovery was better on all three official validation measures and was easier to reproduce as the final submission model.
 
-Once validation confirms that the tables can be aligned, we can measure forecast accuracy.
+### Supporting backtest and caution
 
-## 3. Forecast evaluation
+- The additional backtest uses a July 2022 cutoff and forecasts the next 12 months.
+- TimesFM ranked first with mean MASE `2.06`.
+- Blended recovery ranked second with `2.19` and remained close to TimesFM.
+- The backtest overlaps part of the official validation period, so it is supporting evidence rather than a fully independent test.
+- The official validation period remains the main basis for final model selection.
 
-The evaluation function is `evaluate_forecast_wide`.
+[SCREEN: Display `validation_model_comparison`, then `backtest_summary`, and finally `model_summary`. Pause on the blended-recovery and TimesFM rows. Highlight the single `selected=True` value and explain the decision in one clear sentence.]
 
-```python
-evaluate_forecast_wide(
-    forecast_wide_df,
-    actual_wide_df,
-    training_actual_wide_df,
-    start_month,
-    end_month,
-    required_destinations=None,
-    naive_lag=1,
-    date_column="Date",
-)
-```
+## 13:30-16:00 - Final forecast and selected markets
 
-This function aligns forecasts and actuals by month and destination. It then calculates MAE, MASE, and MAPE for each destination, followed by unweighted aggregate summaries.
+The final model is trained using public history through July 2023. It produces 12 rows from August 2023 to July 2024 for all 20 destinations.
 
-The forecast and actual tables supply values for the evaluation period. A separate training table is used only to calculate the MASE denominator. This keeps the scale calculation cutoff-safe. The start and end months define the inclusive evaluation window.
+For Australia, the blend's validation MASE is approximately 1.04, compared with 1.67 for lag-1 and 4.07 for lag-12. The final forecast ranges from about 63 thousand to 106 thousand and ends near 93 thousand. It retains seasonal movement but remains below the historical peak. The main uncertainty is the speed of recovery relative to the recent six-month pattern.
 
-The `naive_lag` controls the training pairs used for MASE. Official comparisons use a lag of one, even when evaluating a forecast that was generated with a lag of twelve.
+For Japan, the blend improves on both naive baselines but still has a relatively high validation MASE of about 3.41. Its final forecast rises from approximately 237 thousand to 407 thousand. Prophet performs better for Japan individually, showing that one global model choice is not optimal for every destination.
 
-After validating the inputs, the function converts dates to periods and subsets the forecast and actual data to the evaluation window. Duplicate dates are rejected because they make one-to-one alignment ambiguous. The tables are then inner-joined by month with one-to-one validation. Missing, nonnumeric, and infinite metric inputs become `NaN` so unusable pairs can be excluded safely.
+We selected New Zealand because its historical pattern is strongly correlated with Australia. Its final forecast ranges from roughly 15 thousand to 28 thousand. The unblended recovery model performs better for this market, so the selected common blend may understate some recovery months.
 
-### MAE
+We selected Taiwan China as a contrasting market with weaker correlation to Japan and a slower recovery. Lag-1 and SARIMA outperform the blend for this destination. The final blend ranges from approximately 24 thousand to 40 thousand, illustrating the risk that a common recovery adjustment can overcorrect in a slow-recovery market.
 
-MAE means Mean Absolute Error. For each valid forecast-and-actual pair, the function calculates the absolute difference and then takes the mean.
+These cases show why we report destination-level evidence as well as aggregate averages. The selected blend is strongest overall, but uncertainty and the best-performing model differ across markets.
 
-```text
-absolute error = absolute value of actual minus forecast
-MAE = mean of the absolute errors
-```
+[SCREEN: Show `forecast_submission_wide`, followed by the four market validation tables and plots. Do not scroll too quickly through all 20 columns.]
 
-The field `n` records the number of valid pairs. If there are none, MAE is `NaN`.
+## 16:00-18:00 - Reproducibility and CSV demonstration
 
-### MASE
+We now demonstrate how the submitted CSV is regenerated.
 
-MASE means Mean Absolute Scaled Error. It compares forecast error with a naive error scale from the training history.
+The final cell reads the selected model from `model_summary`; it does not hard-code a different model during export. It generates `forecast_submission_wide` using only history through July 2023 and then runs `validate_forecast_actual_wide` in forecast-only mode.
 
-The function prepares the training data, keeps the last duplicated month, sorts it, and pairs every value with the value exactly `naive_lag` calendar months earlier. Exact calendar pairing prevents a missing month from turning two non-consecutive rows into a false lag pair.
+[SCREEN: Restart or use a clean kernel where practical. Run the final-generation cell. Zoom in on the following output.]
 
-```text
-denominator = mean absolute difference between valid lagged training pairs
-MASE = MAE divided by the denominator
-```
+The audit reports `is_valid=True` and `can_align=None`. It confirms 12 rows, all required months, all 20 destinations, no duplicate dates, no missing values, and numeric finite forecasts.
 
-The field `n_denominator_pairs` records how many pairs were used. MASE is unavailable when MAE is unavailable, no denominator pairs exist, or the denominator is missing or zero. In that case, `mase` is `NaN`, `mase_available` is false, and `denominator_warning` is true.
+The export cell writes this exact audited object with `index=False` to:
 
-### MAPE
+`SIT742-2026T2-A2-<ConfirmedGroupID>-Forecast.csv`
 
-MAPE means Mean Absolute Percentage Error. It starts with the valid MAE rows but excludes zero actual values to avoid division by zero.
+[SCREEN: Run the export cell, show the printed filename, and open the generated CSV briefly. Confirm that its first column is `Date`, it has no index column, and its first and last months are `2023M08` and `2024M07`.]
 
-```text
-MAPE = mean of the absolute percentage errors, multiplied by 100
-```
+No forecast values are manually edited after export. The repository records package requirements, and the workflow uses relative paths. The deterministic selected model gives the same forecasts when rerun with the same input data and parameters.
 
-If no valid nonzero actual values remain, MAPE is `NaN`.
+## 18:00-19:00 - Limitations and possible improvements
 
-### Evaluation output
+Our main limitation is the structural uncertainty of forecasting during tourism recovery. The official validation window contains only five months, and performance varies considerably by destination. MAPE can also become unstable for small actual values, while MASE depends on a reliable historical denominator.
 
-The function returns two objects:
+The fixed 0.4 blend weight was not selected through exhaustive optimisation. Future work could use several rolling-origin validation windows to tune recovery weights and caps without relying heavily on one short period. We could also use regularised destination-specific weights, allowing markets such as Japan or Taiwan China to use different model combinations while limiting overfitting.
 
-```python
-destination_metrics, aggregate_metrics
-```
+Additional improvements could include forecast intervals or recovery scenarios, formal residual diagnostics, and sensitivity analysis for the recovery window, decay horizon, and growth cap. These additions would improve uncertainty communication while keeping the submitted point-forecast CSV in the required schema.
 
-The destination DataFrame contains the destination, valid-pair count, MAE, MASE, MAPE, denominator, denominator-pair count, MASE availability, and denominator warning.
+## 19:00-19:30 - Contributions and collaboration
 
-The aggregate dictionary contains the number of destinations, mean MASE, median MASE, and mean MAPE. It includes only available metric values and gives every destination equal weight.
+Our work was completed collaboratively through shared review of the notebook, forecast outputs, and written interpretation. We used a common workflow and checked that every model followed the same cutoffs, destination coverage, and evaluation measures.
 
-Lower metric values are better. MAE is expressed in the original units. MAPE expresses error as a percentage. A MASE below one is better than the chosen naive scale, one is equal to it, and above one is worse.
+Each participating member should briefly state one verified contribution, such as Q1-Q3 implementation, EDA, candidate-model development, validation analysis, notebook integration, market interpretation, reproducibility checks, final forecast review, or video coordination.
 
-These first three functions give us the basic workflow: generate, validate, and evaluate. We will now look at the candidate models.
+We reviewed the final notebook and submission files together. **<Briefly describe the actual collaboration method, such as meetings, Git branches, peer review, or division of notebook sections.>**
 
-## 4. Seasonal recovery forecasting
+[SCREEN: Show the completed `GROUP_INFO` contribution fields or a concise contribution slide.]
 
-The next function is `generate_seasonal_recovery_forecast_wide`.
+## 19:30-20:00 - Closing
 
-```python
-generate_seasonal_recovery_forecast_wide(
-    historical_actual_wide,
-    cutoff_label,
-    forecast_months,
-    required_destinations=None,
-    date_column=FINAL_FORECAST_DATE_COLUMN,
-    recovery_window=6,
-    decay_horizon=12,
-    ratio_clip_bounds=(0.1, 10.0),
-    max_growth_multiple=1.5,
-)
-```
+### Points to emphasize
 
-This method extends a lag-twelve seasonal-naive forecast with an estimate of recent demand recovery. It is designed for data with both a repeating annual pattern and a changing overall level, such as demand recovering after the COVID-19 disruption.
+- **Complete task:** we forecast 12 months of tourism demand for all 20 destinations.
+- **No leakage:** validation and final forecasts use strict February and July 2023 cutoffs.
+- **Reliable workflow:** Q1 generates forecasts, Q2 validates the tables, and Q3 measures accuracy.
+- **Fair comparison:** all seven models use the same months, destinations, and MASE/MAPE evaluation rules.
+- **Final choice:** blended recovery achieved the best official mean MASE, median MASE, and mean MAPE.
+- **Modern comparison:** TimesFM ranked close to the selected model and achieved the best longer backtest result, showing that simple zero-shot use can be valuable.
+- **Submission readiness:** the final audit passed with 12 rows, 20 destinations, and numeric finite values.
+- **Reproducibility:** the final CSV is generated directly from `forecast_submission_wide` with no manual forecast editing.
+- **Honest limitation:** the validation window is short, and future work should use more rolling validation and destination-specific model combinations.
 
-It preserves the previous year's seasonal shape and adds a recovery adjustment that gradually decreases over the horizon. The method is deterministic and uses only observations at or before the cutoff.
+### Suggested final statement
 
-For each destination, it averages the latest valid observations inside the recovery window and compares them with the same calendar months one year earlier. Dividing the recent average by the earlier average gives the recovery ratio.
+In summary, we created a cutoff-safe and reproducible forecasting workflow for all 20 destinations. We used Q1 to generate the required baselines, Q2 to check table quality, and Q3 to compare forecast accuracy. Among seven candidate models, blended recovery gave the best official MASE and MAPE results while remaining stable and easy to reproduce. TimesFM was also a strong and useful zero-shot model, especially in the longer backtest. Finally, our audited 12-month forecast passed all schema and value checks and can be exported directly from the notebook. The main next step would be wider rolling validation and more destination-specific model selection. Thank you.
 
-If there is no valid history, or if the earlier average is missing, zero, or negative, the ratio becomes a neutral value of one. It is also clipped to the configured bounds, which are 0.1 and 10 by default.
+---
 
-For every forecast step, the seasonal source comes from exactly twelve months earlier. If it is unavailable, the function carries forward the last valid cutoff-safe observation.
+## Recording emphasis checklist
 
-```text
-decay weight = maximum of zero and 1 minus forecast step divided by decay horizon
-applied ratio = 1 plus recovery ratio minus 1, multiplied by the decay weight
-forecast = seasonal source multiplied by the applied ratio
-```
+The following points should be visibly demonstrated or clearly emphasized during recording:
 
-The full recovery ratio is applied at the first step. Each later step uses less of it. At or after the decay horizon, the ratio becomes one, moving the result back toward an ordinary seasonal-naive forecast.
-
-The output is capped at `max_growth_multiple` times the cutoff-safe historical maximum. Missing seasonal history falls back to the last valid value, while a destination with no usable history produces `NaN`.
-
-This model is responsive, but its projections can sometimes be strong. The next function balances that responsiveness with stability.
-
-## 5. Blended recovery forecasting
-
-The function `generate_blended_recovery_forecast_wide` combines the recursive lag-one forecast with the seasonal recovery forecast.
-
-```python
-generate_blended_recovery_forecast_wide(
-    historical_actual_wide,
-    cutoff_label,
-    forecast_months,
-    required_destinations=None,
-    date_column=FINAL_FORECAST_DATE_COLUMN,
-    recovery_weight=0.4,
-)
-```
-
-The default recovery weight is 0.4. This gives 60 percent weight to the stable lag-one forecast and 40 percent to seasonal recovery.
-
-```text
-blended forecast =
-    1 minus recovery weight, multiplied by the lag-one forecast,
-    plus recovery weight, multiplied by the seasonal recovery forecast
-```
-
-A weight of zero returns lag-one values. A weight of one returns seasonal recovery values. Intermediate values trade stability for seasonal responsiveness. The default is fixed rather than tuned by destination.
-
-The weight must be between zero and one, or the function raises `ValueError`. The output preserves the date values and column order, while `NaN` in either component normally propagates to the blend.
-
-So far, the candidate methods have been deterministic. We will now move to a statistical time-series model.
-
-## 6. SARIMA forecasting
-
-The SARIMA function is `generate_sarima_forecast_wide`.
-
-```python
-generate_sarima_forecast_wide(
-    historical_actual_wide,
-    cutoff_label,
-    forecast_months,
-    required_destinations=None,
-    date_column=FINAL_FORECAST_DATE_COLUMN,
-    order=(1, 1, 1),
-    seasonal_order=(1, 1, 1, 12),
-    min_history_months=36,
-    max_growth_multiple=1.5,
-    fallback_generator=generate_seasonal_recovery_forecast_wide,
-    diagnostic_log=None,
-)
-```
-
-This function fits one `statsmodels` SARIMAX model independently for each destination. Its defaults define a SARIMAX 1, 1, 1 model with a seasonal 1, 1, 1 component and a twelve-month cycle. The same fixed orders are used for every destination, avoiding a separate tuning search for each series.
-
-Forecast months must be consecutive and begin immediately after the cutoff. The function removes later observations and generates a complete fallback forecast before fitting any model.
-
-If a destination has fewer than 36 valid observations by default, it immediately uses the seasonal recovery fallback. Otherwise, the series begins at its first valid observation and is converted to monthly frequency, leaving internal missing months visible. The function then fits SARIMA and forecasts the exact horizon.
-
-Stationarity and invertibility enforcement are disabled to support a wider range of series. A fitting error or any nonfinite prediction causes that destination to use fallback values.
-
-Successful model forecasts are floored at zero and capped at 1.5 times the cutoff-safe historical maximum by default. If a dictionary is supplied as `diagnostic_log`, `fallback_destinations` records which destinations used fallback. A failure for one destination does not stop the others.
-
-Next, we will look at a model that handles trend and seasonality differently.
-
-## 7. Prophet forecasting
-
-The Prophet function is `generate_prophet_forecast_wide`.
-
-```python
-generate_prophet_forecast_wide(
-    historical_actual_wide,
-    cutoff_label,
-    forecast_months,
-    required_destinations=None,
-    date_column=FINAL_FORECAST_DATE_COLUMN,
-    min_history_months=36,
-    max_growth_multiple=1.5,
-    fallback_generator=generate_seasonal_recovery_forecast_wide,
-    diagnostic_log=None,
-)
-```
-
-This function also fits one model per destination. Prophet represents trend changes together with annual seasonality.
-
-Its fixed configuration enables yearly seasonality, disables weekly and daily seasonality, and uses multiplicative seasonality so seasonal effects scale with the forecast level. Setting `mcmc_samples` to zero uses MAP estimation, improving repeatability and runtime.
-
-The months must again be consecutive and immediately follow the cutoff. For each destination, missing history is removed. If fewer than 36 valid observations remain, the fallback is used. Otherwise, monthly periods become Prophet timestamps, dates map to `ds`, values map to `y`, and the point forecast is read from `yhat`.
-
-A fitting error, prediction error, or nonfinite value activates the fallback for that destination. Successful forecasts are floored at zero and capped at 1.5 times the historical maximum by default. Fallback destinations can be captured in the diagnostic log.
-
-No COVID-specific regressor or manual intervention is included. Prophet must represent structural change through its standard trend mechanism.
-
-This brings us to the final candidate: a pretrained time-series foundation model.
-
-## 8. TimesFM forecasting
-
-The final function is `generate_timesfm_forecast_wide`.
-
-```python
-generate_timesfm_forecast_wide(
-    historical_actual_wide,
-    cutoff_label,
-    forecast_months,
-    required_destinations=None,
-    date_column=FINAL_FORECAST_DATE_COLUMN,
-    max_growth_multiple=1.5,
-    fallback_generator=generate_blended_recovery_forecast_wide,
-    diagnostic_log=None,
-)
-```
-
-This function uses Google's pretrained TimesFM 2.5, 200-million-parameter PyTorch model, with the pinned checkpoint:
-
-```text
-google/timesfm-2.5-200m-pytorch
-```
-
-TimesFM runs in zero-shot mode. It is not fitted or fine-tuned on this dataset. Instead, each destination's cutoff-safe history is supplied directly as context. The model is loaded and compiled once per runtime and then reused.
-
-The configuration supports up to 512 context observations and a twelve-month forecast horizon. Input normalization, continuous quantile output, flip invariance, positive-series inference, and quantile-crossing correction are enabled. The per-core batch size is 20, and float32 matrix multiplication precision is set to high.
-
-The cache location comes from `TIMESFM_CACHE_DIR`, with `.cache/timesfm` as the default.
-
-Forecast months must be consecutive and immediately follow the cutoff. After cutoff filtering, the function prepares blended recovery fallback values. Missing history is removed, valid histories become `float32`, and all eligible destinations are forecast together. A destination with no history uses fallback immediately.
-
-Every prediction is checked for finite values. Valid outputs are floored at zero and capped at 1.5 times the historical maximum by default. If model loading or batch prediction fails, all eligible destinations use their fallback forecasts.
-
-The diagnostic log can record the sorted fallback destinations, pinned model ID, and any exception text. The intended horizon is no more than twelve months. The first call may be slower if the checkpoint must be downloaded, while later calls reuse the cached model.
-
-## End-to-end workflow
-
-We have now covered all eight functions. Let us bring them together into one workflow.
-
-First, generate cutoff-safe forecasts with the naive function and the candidate models.
-
-Second, validate each forecast with `validate_forecast_actual_wide` to confirm the correct months, destinations, structure, and values.
-
-Third, after confirming alignment readiness, evaluate the forecasts with `evaluate_forecast_wide`.
-
-Fourth, compare destination-level and aggregate MASE and MAPE results across the candidate methods.
-
-Finally, run the validator in forecast-only mode before exporting the selected forecast. This final audit ensures that the submission has the exact required shape and no invalid values.
-
-## Closing summary
-
-To summarize each function in one question:
-
-`generate_naive_forecast_wide` asks: what would the forecast be if earlier values repeated at a chosen lag?
-
-`validate_forecast_actual_wide` asks: are these tables complete, clean, and safe to align?
-
-`evaluate_forecast_wide` asks: after alignment, how accurate is the forecast for each destination and overall?
-
-`generate_seasonal_recovery_forecast_wide` asks: what if last year's seasonal pattern repeats at the current recovery level?
-
-`generate_blended_recovery_forecast_wide` asks: what if we combine a stable latest-level forecast with the seasonal recovery pattern?
-
-`generate_sarima_forecast_wide` asks: what does a fixed statistical model of trend changes, autocorrelation, and yearly seasonality predict?
-
-`generate_prophet_forecast_wide` asks: what does a trend-and-seasonality model with changepoints predict?
-
-And `generate_timesfm_forecast_wide` asks: what does a pretrained foundation model predict from each destination's history without local training?
-
-Together, these functions provide a consistent workflow for forecast generation, quality checking, accuracy evaluation, model comparison, and final export.
-
-That concludes this developer guide.
+1. **All members participate.** Each person should appear or speak and explain a meaningful technical component.
+2. **Problem and data.** State that the task forecasts Chinese outbound tourism demand for 20 destinations using the TULIP Lab `ISF-TDF2023` dataset.
+3. **Cutoff safety.** Emphasize the February 2023 validation cutoff and July 2023 final cutoff. Make clear that later actuals are never used as forecast inputs.
+4. **EDA-to-model connection.** Do not only describe plots; explain how seasonality, nonstationarity, COVID disruption, and uneven recovery motivated the candidate models and safeguards.
+5. **Candidate-model comparison.** Give the basic idea, one strength, and one limitation for each model; avoid reading function implementations or every parameter.
+6. **Required baselines.** Show both lag-1 and lag-12 results rather than discussing only advanced models.
+7. **Both performance measures.** Explain why MASE and MAPE provide different views and mention their limitations.
+8. **Model-selection evidence.** Pause on the comparison table and clearly state why the 0.4 blended-recovery model was selected.
+9. **Weight limitation.** Do not describe 0.4 as mathematically optimal; call it a fixed, validation-supported trade-off.
+10. **Destination evidence.** Show at least Australia, Japan, New Zealand, and Taiwan China, including one limitation or risk for each.
+11. **Final schema.** Show that `forecast_submission_wide` contains 12 months and exactly 20 destination columns plus `Date`.
+12. **Audit result.** Zoom in on `is_valid=True` and `can_align=None` before export.
+13. **CSV regeneration.** Run the export cell, identify the exact submitted CSV, and state that it comes directly from `forecast_submission_wide` with `index=False`.
+14. **Correct naming.** Use `SIT742`, not `SIG742`, and replace `<ConfirmedGroupID>` everywhere before recording.
+15. **Reproducibility and stability.** Mention deterministic final forecasts, relative paths, documented dependencies, and model fallbacks.
+16. **Honest limitations.** Mention the short validation window, overlapping supporting backtest, destination heterogeneity, and lack of exhaustive blend-weight tuning.
+17. **Contributions.** Replace all contribution placeholders with accurate, specific statements that match the submitted work.
