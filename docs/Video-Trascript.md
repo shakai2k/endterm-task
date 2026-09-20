@@ -2,7 +2,11 @@
 
 ## 0:00-1:00 - Introduction and forecasting objective
 
-Hello. We are **Group <ConfirmedGroupID>**, and this is our SIT742 Assignment 2 forecasting project.
+Hello. We are **Group 3 - Team 16**, and this is our SIT742 Assignment 2 forecasting project, represented by:
+
+1. Swaminathan Babu Rao alias Swami
+2. Biswadeep DasGupta alias Biswadeep
+3. Rohit Jaiswal alias Rohit 
 
 Our task is to forecast monthly Chinese outbound tourism demand for 20 destinations. We use the public TULIP Lab `ISF-TDF2023` dataset. The public history is available through July 2023, and our final forecast covers the 12 months from August 2023 to July 2024.
 
