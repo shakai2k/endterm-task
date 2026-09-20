@@ -51,6 +51,21 @@ Use these as simple talking points. Do not read every point word for word. Keep 
 - Final forecasting uses public history only through `2023M07` and forecasts `2023M08` to `2024M07`.
 - The cutoff is applied before forecasting, so later actual values cannot leak into model inputs.
 
+### NaN and null-value handling
+
+- **Emphasize:** pandas represents empty numeric cells as `NaN`. The workflow treats `NaN`, `None`, and `pd.NA` as missing data; it never assumes that a missing observation means zero demand.
+- We do not apply blanket zero-filling, interpolation, or historical-value imputation. The original missing values remain visible in the wide history table and in the EDA missingness summary.
+- The missingness summary records both the number of missing months and the first observed month for every destination. Australia and Hawaii have complete histories, while Chile has the largest missing count at 291 months.
+- Most missing values occur before a destination began reporting. However, Chile's first observation is `2012M01`; only 276 months precede that date, so its total indicates 15 additional missing observations after reporting began. We therefore avoid claiming that every missing value is only a pre-start value.
+- Q1 returns `NaN` when a required lag source is unavailable rather than inventing a value. A later recursive forecast can remain `NaN` if it depends on that missing source.
+- Q2 counts missing, nonnumeric, and nonfinite values separately. These checks make a forecast invalid instead of silently converting a bad value to zero.
+- Q3 converts missing, nonnumeric, and infinite inputs to `NaN` for evaluation, excludes invalid forecast-actual pairs, excludes zero actuals from MAPE, and uses only valid exact-lag pairs for the MASE denominator. When no valid calculation is possible, it reports `NaN` with an availability or warning flag.
+- The modelling workflow uses available observations with `dropna()` and deterministic fallbacks where needed. This removes unavailable observations from a calculation; it is not value imputation.
+- One limitation is that TimesFM receives each destination after `dropna()`. If a series has an internal gap, such as Chile, this compresses the time sequence rather than explicitly representing the missing calendar month. The selected blended-recovery model does not rely on TimesFM for the final submission.
+- **Emphasize the final result:** the final audit reports zero missing, nonnumeric, and nonfinite forecast values. The exported CSV has 12 data rows, `Date` plus 20 destination columns, and no blank, `NaN`, null, or infinite forecast cells.
+
+[SCREEN: Show `missingness_summary`, briefly point to Chile and the two complete series, then show the Q2 value-count fields and the final zero-count audit fields.]
+
 ### Q1 - Naive-lag forecast generation
 
 - **Emphasize the implementation:** the function first converts month labels to monthly periods and removes every row after the cutoff.
@@ -103,7 +118,7 @@ Use these as prompts and connect each observation to a modelling decision. Keep 
 
 - **Emphasize:** EDA was used to understand whether the 20 destinations could reasonably be forecast using one common set of model assumptions.
 - The public table contains monthly demand histories with different starting dates and numbers of valid observations.
-- Missing periods before a destination began reporting are retained as missing rather than interpreted as zero demand.
+- Missing periods are retained as missing rather than interpreted as zero demand. Most are before reporting began, while Chile also has 15 missing observations after its first reported month.
 - Summary statistics and coefficients of variation show large differences in scale and volatility across destinations. This is why raw MAE alone is not suitable for comparing markets.
 
 ### Univariate findings
@@ -312,6 +327,8 @@ No forecast values are manually edited after export. The repository records pack
 ## 18:00-19:00 - Limitations and possible improvements
 
 Our main limitation is the structural uncertainty of forecasting during tourism recovery. The official validation window contains only five months, and performance varies considerably by destination. MAPE can also become unstable for small actual values, while MASE depends on a reliable historical denominator.
+
+Historical missingness is another limitation. We preserve missing values and exclude invalid pairs rather than treating them as zero, but Chile contains internal gaps after reporting began. In addition, TimesFM's `dropna()` input preparation compresses internal gaps. A future version could reindex every destination to a complete monthly calendar and use a model-specific missing-data strategy or an explicit mask.
 
 The fixed 0.4 blend weight was not selected through exhaustive optimisation. Future work could use several rolling-origin validation windows to tune recovery weights and caps without relying heavily on one short period. We could also use regularised destination-specific weights, allowing markets such as Japan or Taiwan China to use different model combinations while limiting overfitting.
 
