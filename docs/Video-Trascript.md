@@ -156,7 +156,7 @@ Use these points to compare the models in your own words. Focus on the forecast 
 
 ### Common comparison design
 
-- **Emphasize:** all seven candidates use the same cutoff-safe training table, validation months, 20 destinations, wide output schema, and evaluation functions.
+- **Emphasize:** all eight candidates use the same cutoff-safe training table, validation months, 20 destinations, wide output schema, and evaluation functions.
 - Every candidate is evaluated with MASE using lag-1 scaling and with MAPE using zero-actual handling.
 - Fixed settings are applied consistently across destinations to keep the comparison reproducible and avoid hidden destination-specific tuning.
 
@@ -190,7 +190,7 @@ Use these points to compare the models in your own words. Focus on the forecast 
 - **Emphasize:** `BLENDED_RECOVERY_WEIGHT = 0.4` is a fixed, validation-supported stability trade-off.
 - **Strength:** more stable than full seasonal recovery while retaining a non-flat forecast shape.
 - **Limitation:** one common weight may not be optimal for every destination.
-- **Result:** it ranked first with mean MASE `2.49`, median MASE `1.53`, and mean MAPE `43.0%`.
+- **Result:** it ranked first on the primary measures with mean MASE `2.49` and median MASE `1.53`; mean MAPE was `43.0%`.
 - The weight was not obtained from an exhaustive continuous optimisation search.
 
 ### Model 5 - SARIMA
@@ -204,11 +204,12 @@ Use these points to compare the models in your own words. Focus on the forecast 
 
 ### Model 6 - Prophet
 
-- **Why included:** Prophet provides a different statistical approach. It tests whether flexible trend changes and multiplicative yearly seasonality can handle the uneven recovery better than fixed seasonal relationships.
-- **Implementation:** models trend changes with multiplicative yearly seasonality. Daily and weekly seasonalities are disabled for monthly data.
+- **Why included:** Prophet provides a different statistical approach. It tests whether flexible trend changes and yearly seasonality can handle the uneven recovery better than fixed seasonal relationships.
+- **Implementation:** applies `log1p` to demand, allows candidate changepoints through 98 percent of the cutoff-safe history, and uses a fixed five-term yearly Fourier seasonality on the log scale. Daily and weekly seasonalities are disabled for monthly data.
+- The extended changepoint range lets the COVID collapse and reopening influence the fitted trend instead of excluding the latest 20 percent of each history from candidate changepoints.
 - **Strength:** flexible trend and changepoint representation with interpretable components.
-- **Limitation:** the standard configuration may not adapt well to the near-total COVID collapse and reopening without additional regressors or destination-specific tuning.
-- **Result:** mean MASE `4.23`, median MASE `3.75`, and mean MAPE `83.8%`.
+- **Limitation:** even with the revised fixed settings, one common trend and seasonal specification cannot represent every destination's recovery path.
+- **Result:** mean MASE `4.18`, median MASE `2.63`, and mean MAPE `74.7%`.
 
 ### Model 7 - TimesFM 2.5 zero-shot
 
@@ -219,14 +220,22 @@ Use these points to compare the models in your own words. Focus on the forecast 
 - **Limitation:** requires an external checkpoint and more computation, and official validation was slightly weaker than the selected blend.
 - **Result:** mean MASE `2.60`, median MASE `2.00`, and mean MAPE `43.8%`. It ranked second on official mean MASE.
 
+### Model 8 - Holt-Winters recovery ensemble
+
+- **Why included:** Holt-Winters is a transparent classical method for monthly level, trend, and seasonality. Blending it with the existing recovery model tests whether learned seasonal smoothing adds value without losing the post-COVID anchor.
+- **Implementation:** fits damped additive trend and additive 12-month seasonality independently by destination, then combines 30 percent Holt-Winters with 70 percent blended recovery. This is equivalent to 30 percent Holt-Winters, 42 percent lag-1, and 28 percent seasonal recovery.
+- **Strength:** achieved the best official mean MAPE at `42.8%` and remained close to the selected model on mean MASE.
+- **Limitation:** mean MASE `2.53` and median MASE `2.01` were still worse than blended recovery. Chile, Maldives, and Thailand contain internal gaps and therefore used the documented blended-recovery fallback for the Holt-Winters component.
+- **Result:** mean MASE `2.53`, median MASE `2.01`, and mean MAPE `42.8%`. It is a strong challenger but was not selected because MASE is the primary assignment measure.
+
 ### Shared stability and fallback rules
 
 - SARIMA and Prophet require sufficient history and fall back to seasonal recovery after fitting errors or nonfinite predictions.
-- TimesFM falls back to blended recovery if loading or batch inference fails.
+- TimesFM and Holt-Winters fall back to blended recovery if loading, fitting, or prediction fails.
 - Successful fitted forecasts are floored at zero and capped relative to the destination's cutoff-safe historical maximum.
-- Diagnostic logs record fallbacks; no destination required fallback in the saved official validation run.
+- Prophet and Holt-Winters record fallback diagnostics and fixed settings. Prophet required no fallback; the Holt-Winters component used its deterministic fallback for the three internally incomplete series.
 
-[SCREEN: Show one model-comparison diagram or the seven model headings. Pause on the blend formula and the shared fallback safeguards, then move to the measured results rather than opening every function.]
+[SCREEN: Show one model-comparison diagram or the eight model headings. Pause on both blend formulas and the shared fallback safeguards, then move to the measured results rather than opening every function.]
 
 ## 10:30-13:30 - Validation results and model selection
 
@@ -248,24 +257,26 @@ Use this section to explain what the results mean, where each model is useful, a
 | Naive lag-1 | 2.67 | 1.70 | 48.1% | Useful when the latest level is the safest assumption and a flat forecast is acceptable. |
 | Naive lag-12 | 4.41 | 3.83 | 77.9% | Useful when the yearly pattern is stable and the demand level has not changed greatly. |
 | Seasonal recovery | 2.70 | 1.62 | 45.4% | Useful when annual seasonality remains important but the market is recovering to a new level. |
-| Blended recovery | **2.49** | **1.53** | **43.0%** | Useful when both stability and recovery movement are needed. This was the selected model. |
+| Blended recovery | **2.49** | **1.53** | 43.0% | Useful when both stability and recovery movement are needed. This was the selected model. |
 | SARIMA | 2.98 | 2.78 | 54.9% | Useful when a series has enough history and reasonably stable autocorrelation and seasonal structure. |
-| Prophet | 4.23 | 3.75 | 83.8% | Useful when trend changes and multiplicative seasonality are more important than fixed lag relationships. |
+| Prophet | 4.18 | 2.63 | 74.7% | Useful when recent trend changes and proportional seasonal movement are more important than fixed lag relationships. |
 | TimesFM 2.5 | 2.60 | 2.00 | 43.8% | Useful as a quick zero-shot model when strong forecasts are needed without local fitting or manual order selection. |
+| Holt-Winters recovery ensemble | 2.53 | 2.01 | **42.8%** | Useful when smoothed level, trend, seasonality, and recovery anchoring are all desired. |
 
 ### What the results show for each model
 
 - **Lag-1:** this was a strong and stable baseline, but its flat forecast cannot show annual peaks and troughs.
 - **Lag-12:** this was the weakest overall model because the previous year's depressed values did not represent the speed of recovery.
 - **Seasonal recovery:** this improved MAPE compared with lag-1 and restored seasonal shape, but full recovery scaling was less stable for fast-reopening destinations.
-- **Blended recovery:** this produced the lowest mean MASE, lowest median MASE, and lowest mean MAPE in official validation.
+- **Blended recovery:** this produced the lowest mean MASE and lowest median MASE in official validation.
 - **SARIMA:** this captured statistical and seasonal structure, but the fixed order did not handle the COVID disruption as well as the recovery-aware blend.
-- **Prophet:** this provided a useful trend-based comparison, but its fixed configuration was weak in aggregate for the collapse-and-reopening pattern.
+- **Prophet:** extending changepoints toward the cutoff and fitting log demand improved stability and percentage error, but it remained weak in aggregate relative to the recovery-aware blend.
 - **TimesFM:** this was very close to the selected model and clearly outperformed several traditional candidates.
+- **Holt-Winters ensemble:** this produced the lowest mean MAPE and competitive mean MASE, but its median and mean MASE did not beat blended recovery.
 
 ### Why blended recovery was selected
 
-- **Best official result:** it ranked first on mean MASE, median MASE, and mean MAPE.
+- **Best primary results:** it ranked first on mean MASE and median MASE. The Holt-Winters ensemble led MAPE by only about 0.4 percentage points.
 - **Balanced logic:** 60 percent lag-1 controls unstable recovery values, while 40 percent seasonal recovery adds movement and annual shape.
 - **Stable output:** it produced finite, non-negative, destination-specific forecasts for all 20 markets.
 - **Simple reproduction:** it is deterministic and does not depend on an optimiser, random seed, or downloaded model during final generation.
@@ -282,17 +293,17 @@ Use this section to explain what the results mean, where each model is useful, a
 - It can forecast all eligible destination histories together in one batch.
 - This makes it useful for quick benchmarking and for future work with more rolling validation windows.
 - However, simple model use does not mean zero operational cost. TimesFM still needs the external checkpoint, compatible packages, more memory, and more computation than blended recovery.
-- We did not select it because blended recovery was better on all three official validation measures and was easier to reproduce as the final submission model.
+- We did not select it because blended recovery was better on both official MASE summaries and was easier to reproduce as the final submission model.
 
 ### Supporting backtest and caution
 
 - The additional backtest uses a July 2022 cutoff and forecasts the next 12 months.
 - TimesFM ranked first with mean MASE `2.06`.
-- Blended recovery ranked second with `2.19` and remained close to TimesFM.
+- The Holt-Winters ensemble ranked second with mean MASE `2.18`, followed closely by blended recovery at `2.19`.
 - The backtest overlaps part of the official validation period, so it is supporting evidence rather than a fully independent test.
 - The official validation period remains the main basis for final model selection.
 
-[SCREEN: Display `validation_model_comparison`, then `backtest_summary`, and finally `model_summary`. Pause on the blended-recovery and TimesFM rows. Highlight the single `selected=True` value and explain the decision in one clear sentence.]
+[SCREEN: Display `validation_model_comparison`, then `backtest_summary`, and finally `model_summary`. Pause on the blended-recovery, Holt-Winters ensemble, and TimesFM rows. Highlight the single `selected=True` value and explain the MASE-primary decision in one clear sentence.]
 
 ## 13:30-16:00 - Final forecast and selected markets
 
@@ -300,7 +311,7 @@ The final model is trained using public history through July 2023. It produces 1
 
 For Australia, the blend's validation MASE is approximately 1.04, compared with 1.67 for lag-1 and 4.07 for lag-12. The final forecast ranges from about 63 thousand to 106 thousand and ends near 93 thousand. It retains seasonal movement but remains below the historical peak. The main uncertainty is the speed of recovery relative to the recent six-month pattern.
 
-For Japan, the blend improves on both naive baselines but still has a relatively high validation MASE of about 3.41. Its final forecast rises from approximately 237 thousand to 407 thousand. Prophet performs better for Japan individually, showing that one global model choice is not optimal for every destination.
+For Japan, the blend improves on both naive baselines but still has a relatively high validation MASE of about 3.41. Its final forecast rises from approximately 237 thousand to 407 thousand. The revised Prophet remains weaker for Japan, showing that flexible changepoints alone do not capture every destination's recovery path.
 
 We selected New Zealand because its historical pattern is strongly correlated with Australia. Its final forecast ranges from roughly 15 thousand to 28 thousand. The unblended recovery model performs better for this market, so the selected common blend may understate some recovery months.
 
@@ -334,7 +345,7 @@ Our main limitation is the structural uncertainty of forecasting during tourism 
 
 Historical missingness is another limitation. We preserve missing values and exclude invalid pairs rather than treating them as zero, but Chile contains internal gaps after reporting began. In addition, TimesFM's `dropna()` input preparation compresses internal gaps. A future version could reindex every destination to a complete monthly calendar and use a model-specific missing-data strategy or an explicit mask.
 
-The fixed 0.4 blend weight was not selected through exhaustive optimisation. Future work could use several rolling-origin validation windows to tune recovery weights and caps without relying heavily on one short period. We could also use regularised destination-specific weights, allowing markets such as Japan or Taiwan China to use different model combinations while limiting overfitting.
+The fixed 0.4 recovery weight and 0.3 Holt-Winters ensemble weight were not selected through exhaustive optimisation. Future work could use several rolling-origin validation windows to tune recovery weights and caps without relying heavily on one short period. We could also use regularised destination-specific weights, allowing markets such as Japan or Taiwan China to use different model combinations while limiting overfitting.
 
 Additional improvements could include forecast intervals or recovery scenarios, formal residual diagnostics, and sensitivity analysis for the recovery window, decay horizon, and growth cap. These additions would improve uncertainty communication while keeping the submitted point-forecast CSV in the required schema.
 
@@ -355,8 +366,8 @@ We reviewed the final notebook and submission files together. **<Briefly describ
 - **Complete task:** we forecast 12 months of tourism demand for all 20 destinations.
 - **No leakage:** validation and final forecasts use strict February and July 2023 cutoffs.
 - **Reliable workflow:** Q1 generates forecasts, Q2 validates the tables, and Q3 measures accuracy.
-- **Fair comparison:** all seven models use the same months, destinations, and MASE/MAPE evaluation rules.
-- **Final choice:** blended recovery achieved the best official mean MASE, median MASE, and mean MAPE.
+- **Fair comparison:** all eight models use the same months, destinations, and MASE/MAPE evaluation rules.
+- **Final choice:** blended recovery achieved the best official mean and median MASE; the Holt-Winters ensemble achieved the best MAPE but did not win the primary MASE comparison.
 - **Modern comparison:** TimesFM ranked close to the selected model and achieved the best longer backtest result, showing that simple zero-shot use can be valuable.
 - **Submission readiness:** the final audit passed with 12 rows, 20 destinations, and numeric finite values.
 - **Reproducibility:** the final CSV is generated directly from `forecast_submission_wide` with no manual forecast editing.
@@ -364,7 +375,7 @@ We reviewed the final notebook and submission files together. **<Briefly describ
 
 ### Suggested final statement
 
-In summary, we created a cutoff-safe and reproducible forecasting workflow for all 20 destinations. We used Q1 to generate the required baselines, Q2 to check table quality, and Q3 to compare forecast accuracy. Among seven candidate models, blended recovery gave the best official MASE and MAPE results while remaining stable and easy to reproduce. TimesFM was also a strong and useful zero-shot model, especially in the longer backtest. Finally, our audited 12-month forecast passed all schema and value checks and can be exported directly from the notebook. The main next step would be wider rolling validation and more destination-specific model selection. Thank you.
+In summary, we created a cutoff-safe and reproducible forecasting workflow for all 20 destinations. We used Q1 to generate the required baselines, Q2 to check table quality, and Q3 to compare forecast accuracy. Among eight candidate models, blended recovery gave the best official mean and median MASE while remaining stable and easy to reproduce. The new Holt-Winters recovery ensemble achieved the best MAPE, and TimesFM remained strongest in the longer backtest. Because MASE is the primary assignment measure, blended recovery remains the final model. Finally, our audited 12-month forecast passed all schema and value checks and can be exported directly from the notebook. The main next step would be wider rolling validation and more destination-specific model selection. Thank you.
 
 ---
 
@@ -380,7 +391,7 @@ The following points should be visibly demonstrated or clearly emphasized during
 6. **Required baselines.** Show both lag-1 and lag-12 results rather than discussing only advanced models.
 7. **Both performance measures.** Explain why MASE and MAPE provide different views and mention their limitations.
 8. **Model-selection evidence.** Pause on the comparison table and clearly state why the 0.4 blended-recovery model was selected.
-9. **Weight limitation.** Do not describe 0.4 as mathematically optimal; call it a fixed, validation-supported trade-off.
+9. **Weight limitation.** Do not describe either 0.4 recovery weighting or 0.3 Holt-Winters weighting as mathematically optimal; call them fixed, validation-supported trade-offs.
 10. **Destination evidence.** Show at least Australia, Japan, New Zealand, and Taiwan China, including one limitation or risk for each.
 11. **Final schema.** Show that `forecast_submission_wide` contains 12 months and exactly 20 destination columns plus `Date`.
 12. **Audit result.** Zoom in on `is_valid=True` and `can_align=None` before export.
