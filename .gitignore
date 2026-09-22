@@ -10,7 +10,7 @@ __pycache__/
 .cache
 
 # Project specific directories
-backup
+backup*
 tmp/
 output
 
