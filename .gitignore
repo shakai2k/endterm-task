@@ -8,6 +8,9 @@ __pycache__/
 .cache/
 *.egg-info/
 .cache
+.serena
+.DS_Store
+./docs/.DS_Store
 
 # Project specific directories
 backup*
@@ -20,3 +23,4 @@ settings.local.json
 
 # Project specific files
 SIG742-2026T2-A2-*.csv
+submission/
